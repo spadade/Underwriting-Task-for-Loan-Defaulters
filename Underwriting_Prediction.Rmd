@@ -1,0 +1,321 @@
+---
+title: "UnderWriting Task for Loan Request Prediction"
+author: "**Group 4**- Rithin Gujja, Srushti Padade, Amruta Deshpande, Chujun Huang"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+    df_print: paged
+---
+
+# **Underwriting**
+
+Underwriting could be described as a perfect job for machine learning in finance, and indeed there is a great deal of worry in the industry that machines will replace a large swath of the underwriting positions that exist today.  Especially at large companies (big banks and publicly traded insurance firms), machine learning algorithms can be trained on millions of examples of consumer data (age, job, marital status, etc.) and financial lending or insurance results. The underlying trends that can be assessed with algorithms, and continuously analyzed to detect trends that might influence lending and insuring into the future.
+
+```{r, include=FALSE}
+load("Underwriting.RData")
+```
+
+# **Libraries**
+
+There are various inbuilt libraries in R which has helped us with the Predictive Modeling. Below libraries are loaded in the enviroment and the algorithm they store are directly utilized as needed predictions.
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(VIM)
+library(glmnet)
+library(glmnetUtils)
+library(caret)
+library(dplyr)
+library(pROC)
+library(ggplot2)
+library(rpart)
+library(randomForest)
+library(gmodels)
+```
+
+# **Data Preparation**
+
+```{r, eval = FALSE}
+Bank_Test_Raw<-read.csv("test_scenario1_2.csv")
+Prop_interest_Test_Raw <- read.csv("test_scenario3.csv")
+```
+
+```{r}
+dim(Bank_Test_Raw)
+
+anyNA(Bank_Test_Raw)
+
+dim(Prop_interest_Test_Raw)
+
+anyNA(Prop_interest_Test_Raw)
+```
+
+The test datasets consists of information on *25,471* customers in relation to *764* dependent variables and *765* variables respectively to help the bank define their eligibility for financial lending. Here we, can see that the dataset have some missing values.
+
+## Imputation
+
+```{r, eval = FALSE}
+Bank_Test <- Bank_Test_Raw
+for(i in 1:ncol(Bank_Test_Raw)){
+  Bank_Test[is.na(Bank_Test[,i]), i] <- median(Bank_Test[,i], na.rm = TRUE)  
+}
+
+Prop_interest_Test <- Prop_interest_Test_Raw
+for(i in 1:ncol(Prop_interest_Test_Raw)){
+  Prop_interest_Test[is.na(Prop_interest_Test[,i]),i] <- median(Prop_interest_Test[,i],na.rm=TRUE)
+}
+```
+
+- Here we have located the empty cells or NA values. Among all the NA values, the rows with few NA values are handled so that NA is replaced with the median of the column to keep the variability of the data constant.
+
+```{r}
+anyNA(Bank_Test)
+
+anyNA(Prop_interest_Test)
+```
+
+## Dimensionality Reduction
+
+The dimensions of the test data are selected based on the training models.
+
+```{r, eval=FALSE}
+TestData <- select(Bank_Test,f3,f5,f55,f67,f70,f80,f82,f102,f103,f111,f112,f132,f136,f145,f153,f180,f190,f198,f200,f218,f221,f222,f238,f241,f251,f270,f281,f286,f290,f293,f294,f295,f296,f314,f315,f323,f361,f373,f374,f383,f384,f398,f413,f428,f471,f479,f514,f518,f522,f526,f533,f536,f546,f556,f588,f604,f617,f620,f631,f650,f652,f655,f663,f665,f666,f673,f674,f676,f682,f704,f705,f709,f734,f740,f747,f752,f771,f775,f776)
+
+Prop_interest <- select(Prop_interest_Test,f3,f5,f55,f67,f70,f80,f82,f102,f103,f111,f112,f132,f136,f145,f153,f180,f190,f198,f200,f218,f221,f222,f238,f241,f251,f270,f281,f286,f290,f293,f294,f295,f296,f314,f315,f323,f361,f373,f374,f383,f384,f398,f413,f428,f471,f479,f514,f518,f522,f526,f533,f536,f546,f556,f588,f604,f617,f620,f631,f650,f652,f655,f663,f665,f666,f673,f674,f676,f682,f704,f705,f709,f734,f740,f747,f752,f771,f775,f776)
+```
+
+# **Prediction**
+
+Our final classification and regression models selected are used here to predict whether the customer will default or not, also we find by what percentage will they default.
+
+We are using the **Random forest** Classification model to find **Probability of Default(PD)** and the **Lasso Regression** model for computing **Loan Given Default(LGD)**.
+
+## Classification - Random Forest model
+
+We are predicting the Defaulted and Non-defaulted customers in test dataset based on the Random forest model(best classification model) we built previously.
+
+```{r, eval = FALSE}
+FinalRF_Pred <- predict(RF_Model, TestData, type = 'prob')
+FinalRF_PredDF <- as.data.frame(FinalRF_Pred)
+```
+
+```{r, eval = FALSE}
+FinalRF_Pred_3 <- predict(RF_Model, Prop_interest, type = 'prob')
+FinalRF_PredDF_3 <- as.data.frame(FinalRF_Pred_3)
+```
+
+## Regression - LASSO regression model
+
+```{r, eval = FALSE}
+FinalLassoReg_Pred <- predict(RegLasso_Model, TestData)
+FinalLassoReg_PredDF <- as.data.frame(FinalLassoReg_Pred)
+```
+
+```{r, eval = FALSE}
+FinalLassoReg_Pred_3 <- predict(RegLasso_Model, Prop_interest)
+FinalLassoReg_PredDF_3 <- as.data.frame(FinalLassoReg_Pred_3)
+```
+
+# **Formulation**
+
+To speculate wheather a customer should be *approved* for the loan or *rejected* we are computing below parameters.
+- **Expected Loss = PD * Loan Amount * LGD**
+- **Expected Profit = (1-PD) * Loan Amount * Year * Percentage of Interest**
+- **Profit gained = Expected profit - Expected loss**
+
+Here our main goal will be to gain maximum profit from the loan. So if the expected profit is greater than the expected loss, then the bank would see profits while minimizing the default of the customer.
+
+```{r, eval=FALSE}
+# Calculating the Expected loss if the loan is approved
+Computed_Loss <- NULL
+for(i in 1:nrow(Bank_Test)){
+  Computed_Loss[i] <- (FinalRF_PredDF[i,2]*Bank_Test$requested_loan[i]*(FinalLassoReg_PredDF[i,1]/100))
+}
+
+#Expected Profit for the span of 5 year at the constatnt annual interest rate of 4.32%
+Computed_Profit <- NULL
+for(i in 1:nrow(Bank_Test)){
+  Computed_Profit[i] <- (FinalRF_PredDF[i,1]*Bank_Test$requested_loan[i]*5*(4.32/100))
+}
+```
+
+```{r, eval=FALSE}
+#Similarly for the Test data 2 where we are calculating the expected profit and expected loss for the requested loan amount with prosed intrest rate.
+
+Prop_Loss <- NULL
+for(i in 1:nrow(Prop_interest_Test)){
+  Prop_Loss[i] <- (FinalRF_PredDF_3[i,2]*Prop_interest_Test$requested_loan[i]*(FinalLassoReg_PredDF_3[i,1]/100))
+}
+
+Prop_Profit <- NULL
+for(i in 1:nrow(Prop_interest_Test)){
+  Prop_Profit[i] <- (FinalRF_PredDF_3[i,1]*Prop_interest_Test$requested_loan[i]*5*(Prop_interest_Test$Proposed_Intrest_Rate[i]/100))
+}
+```
+
+# **Scenario**
+
+## **Scenario 1**
+
+We have underwriting for loan request for the customers with the overall *Bank capital* of **$1.4 Billion**, *annual interest rate* is **4.32%** for a fixed term of **5 Years**.
+
+- We are arranging the customers sorted order of maximum Profit gained
+
+- Also we are formulating cumulative sum with respect to requested loan of each customers.
+
+```{r}
+sum(Bank_Test$requested_loan)
+```
+
+The total amount of all the loan request is approximately **$1.27 Billion**
+
+```{r, eval=FALSE}
+Test_temp <- Bank_Test %>% mutate(profit = Computed_Profit, loss = Computed_Loss) %>% 
+  mutate(totalgain = profit - loss) %>% arrange(desc(totalgain)) %>% mutate(cumsum = cumsum(requested_loan))
+
+Predict_1 <- NULL
+for(i in 1:nrow(Bank_Test)){
+  if(Test_temp$totalgain[i] > 0){
+    Predict_1[i] <- 1
+  }
+  else{
+    Predict_1[i] <- 0
+  }
+}
+```
+
+```{r, include=FALSE, eval=FALSE}
+Test_temp <- cbind(Test_temp, Predict_1)
+Test_Predict1 <- filter(Test_temp, Predict_1 == 1)
+
+Output_1 <- Test_temp %>% arrange(X.1) %>% select(Predict_1)
+
+PLot_1 <- Output_1 %>% group_by(Predict_1) %>% summarise(Count=n())
+
+Loan_Approved_Count_1 <- nrow(Test_Predict1)
+AmountSpent_1 <- sum(Test_Predict1$requested_loan)
+```
+
+```{r, echo=FALSE}
+PLot_1 %>% 
+  ggplot(aes(Predict_1, Count)) +
+  geom_col(fill = "navy") +
+  geom_text(aes(Predict_1, Count, label = Count), vjust = -0.3) +
+  labs(title = "Loan Request Statistics with 1.4 Billion Budget",  x = "Customers Loan Request",  y ="Total Count") +
+  scale_x_continuous(labels = c("Rejected","Approved"), breaks = c(0,1)) +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+```{r}
+Loan_Approved_Count_1
+AmountSpent_1
+```
+
+Total Loan applications approved under scenario 1 are **25070** with the budget spend of approximately **$1.25 Billion**.
+
+## **Scenario 2**
+
+We have underwriting for loan request for the customers with the overall *Bank capital* of **$450 Million**, *annual interest rate* is **4.32%** for a fixed term of **5 Years**.
+
+- We are arranging the customers sorted order of maximum Profit gained as the requested loan amount is higher than the budget.
+
+- Hence the computed cumulative sum with respect to requested loan of each customers will be used to filter the customers with maximum gain and under budget.
+
+```{r, eval=FALSE}
+Predict_2 <- NULL
+
+for(i in 1:nrow(Bank_Test)){
+  if(Test_temp$cumsum[i] < 450000000){
+    Predict_2[i] <- 1
+  }
+  else{
+    Predict_2[i] <- 0
+  }
+}
+```
+
+After computing the data in an order of where cumalative sum of Profit gain and proving the loan we rearranged the data with the origin order of the test file and stored the result in the form of 0 as non defaulters and 1 for Defaulters.
+
+```{r, include=FALSE, eval=FALSE}
+Test_temp <- cbind(Test_temp, Predict_2)
+Test_Predict2 <- filter(Test_temp, Predict_2 == 1)
+
+Loan_Approved_Count_2 <- nrow(Test_Predict2)
+AmountSpent_2 <- sum(Test_Predict2$requested_loan)
+
+Output_2 <- Test_temp %>% arrange(X.1) %>% select(Predict_2)
+
+PLot_2 <- Output_2 %>% group_by(Predict_2) %>% summarise(Count=n())
+```
+
+```{r, echo=FALSE}
+PLot_2 %>% 
+  ggplot(aes(Predict_2, Count)) +
+  geom_col(fill = "red") +
+  geom_text(aes(Predict_2, Count, label = Count), vjust = -0.3) +
+  labs(title = "Loan Request Statistics with 450 Million Budget",  x = "Customers Loan Request",  y ="Total Count") +
+  scale_x_continuous(labels = c("Rejected","Approved"), breaks = c(0,1)) +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+```{r}
+Loan_Approved_Count_2
+AmountSpent_2
+```
+
+Total Loan applications approved under scenario 2 are **6448** with the budget spend of **$449,943579 Million**.
+
+## **Scenario 3**
+
+We have underwriting for loan request for the customers with the overall *Bank capital* of **$1.4 Billion**, *annual interest rate* is **proposed by the customer** thus it varies for each customer with the fixed term of **5 Years**.
+
+```{r, eval=FALSE}
+PropTest_temp <- Prop_interest_Test %>% mutate(profit = Prop_Profit, loss = Prop_Loss) %>% 
+  mutate(totalgain = profit - loss) %>% arrange(desc(totalgain)) %>% mutate(cumsum = cumsum(requested_loan))
+
+#Decision Making
+Decision <- NULL
+for(i in 1:nrow(Prop_interest_Test)){
+  if(PropTest_temp$totalgain[i] > 0){
+    Decision[i] <- 1
+  }
+  else{
+    Decision[i] <- 0
+  }
+}
+```
+
+```{r, include=FALSE, eval=FALSE}
+PropTest_temp <- cbind(PropTest_temp, Decision)
+PropTest <- filter(PropTest_temp, Decision == 1)
+
+Loan_Approved_Count_3 <- nrow(PropTest)
+AmountSpent_3 <- sum(PropTest$requested_loan)
+
+Output_3 <- PropTest_temp %>% arrange(X.1) %>% select(Decision)
+PLot_3 <- Output_3 %>% group_by(Decision) %>% summarise(Count=n())
+```
+
+```{r, echo=FALSE}
+PLot_3 %>% 
+  ggplot(aes(Decision, Count)) +
+  geom_col(fill = "brown") +
+  geom_text(aes(Decision, Count, label = Count), vjust = -0.3) +
+  labs(title = "Loan Request Statistics with 1.4 Billion Budget and variable Interest Rate",  x = "Customers Loan Request",  y ="Total Count") +
+  scale_x_continuous(labels = c("Rejected","Approved"), breaks = c(0,1)) +
+  theme(legend.position = "none", panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+```
+
+```{r}
+Loan_Approved_Count_3
+AmountSpent_3
+```
+
+Total Loan applications approved under scenario 2 are **21763** with the budget spend of approximately **$1.1 Billion**.
+
+```{r}
+write.csv(Output_1,"G4_S1.csv", row.names = FALSE)
+write.csv(Output_2,"G4_S2.csv", row.names = FALSE)
+write.csv(Output_3,"G4_S3.csv", row.names = FALSE)
+```

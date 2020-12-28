@@ -1,0 +1,449 @@
+---
+title: "Predicting Status of Loan Approvals"
+author: "**Group 4**- Rithin Gujja, Srushti Padade, Amruta Deshpande, Chujun Huang"
+output:
+  prettydoc::html_pretty:
+    theme: cayman
+    highlight: github
+    toc: true
+    df_print: paged
+---
+
+# **Project Goal**
+
+The goal of the project is to design an appropriate asset-management strategy to optimize the economic capital utilization and minimizing the risk to financial investors.
+
+```{r, include=FALSE}
+load("Underwriting.RData")
+```
+
+# **Objective**
+
+In this project, we will be running the underwriting department of a bank and will decide who would be approved and who would be rejected. Unlike traditional finance-based approaches to this problem, where one distinguishes between good or bad counterparties in a binary way, we seek to anticipate and incorporate both the default and the severity of the losses that result. In doing so, we are building a bridge between traditional banking, where we are looking at reducing the consumption of economic capital, to an asset-management perspective, where we optimize on the risk to the financial investor.
+
+# **Libraries**
+
+There are various inbuilt libraries in R which has helped us with the Predictive Modeling. Below the libraries are loaded in the enviroment and the algorith they store are directly utilized as needed to perform various Classification and Regression models.
+
+```{r, results='hide', message=FALSE, warning=FALSE}
+library(VIM)
+library(glmnet)
+library(glmnetUtils)
+library(caret)
+library(dplyr)
+library(pROC)
+library(ggplot2)
+library(rpart)
+library(randomForest)
+library(gmodels)
+library(broom)
+```
+
+# **Data Cleaning**
+
+We have a dataset storing an information of a certain bank customers which contains a list of variables and the target variable that is "loss". 
+
+```{r, eval = FALSE}
+Bank_raw <- read.csv("train_v3.csv")
+```
+
+Checking the dimensionality of the dataset.
+
+```{r}
+dim(Bank_raw)
+
+anyNA(Bank_raw)
+```
+
+The input data consists of information on *80,000* customers in relation to *763* dependent variables to help the bank define their eligibility for financial lending. Here we can see that the dataset have some missing values.
+
+## Imputation
+
+```{r, eval = FALSE}
+Bank_raw_NA <- Bank_raw
+for(i in 1:ncol(Bank_raw)){
+  Bank_raw_NA[is.na(Bank_raw_NA[,i]), i] <- median(Bank_raw_NA[,i], na.rm = TRUE)
+}
+```
+
+- Here we have located the empty cells or NA values. Among all the NA values, the rows with all the cells with NA values are completely eliminated, while the rows with few NA values are handled so that NA is replaced with the median of the column to keep the variability of the data constant.
+
+- To avoid losing data, we considered keeping the outliers.
+
+```{r}
+anyNA(Bank_raw_NA)
+```
+
+# **Data Pre-processing**
+
+## Normalization
+
+- The data needs to be formated in a normalized manner so the data changes the values of numeric columns in the dataset to a common scale, without distorting differences in the ranges of values.
+- The normalized data is used only to compute the dimensionality reduction technique LASSO. Other modeling techniques we are using works the same for unnormalized data.
+
+- We are using the Z-scored Normalzation technique to scale the dataset.
+
+```{r, eval = FALSE}
+Bank_Scale <- preProcess(Bank_raw_NA,method = c("center","scale"))
+Norm_Bank <- predict(Bank_Scale,Bank_raw_NA)
+```
+
+# Building a very first Liner model with complete dataset
+
+```{r, eval = FALSE}
+linearMod <- lm(loss~., data = Norm_Bank)
+```
+
+```{r}
+glance(linearMod)
+```
+
+Multiple R-squared:  0.01766,	Adjusted R-squared:  0.00966. Thus we see the data does not perform well with themodeling and Pre processing of the data is necessary.
+
+## Dimensionality reduction
+
+- The provided dataset have variables with zero variablility. The Lasso regularization help us determine the columns from the dataset that have good impact on the target variable and thus helps in dimensionality reduction.
+
+- We perform linear dimensional reduction using lasso with minimizing sum of squares of error on the dataset. 
+
+```{r, eval = FALSE}
+Lasso_Model<- cv.glmnet(loss~., data = Norm_Bank, alpha = 1, nlambda = 100)
+```
+
+```{r, echo=FALSE}
+Lasso_Model
+```
+
+Lambda which gives minimum mean cross validated error is **Lamba.min**
+
+```{r, echo=FALSE}
+Lasso_Model$lambda.min
+```
+
+```{r, echo=FALSE}
+plot(Lasso_Model, title = "Lasso Model")
+```
+
+```{r, echo=FALSE}
+plot(coef(Lasso_Model, s = "lambda.min"), xlab = "Variables", ylab = "Co-efficient of Lambda Min", title = "Lasso Model Dimensionality")
+```
+
+Thus after building the lasso model we end up with 81 variables with high variability for our modeling.
+
+## Variable Selection
+
+Here we are selecting only those variables that were determined from previous Lasso Model for our further modeling.
+
+```{r, eval = FALSE}
+Train <- select(Bank_raw_NA,f3,f5,f55,f67,f70,f80,f82,f102,f103,f111,f112,f132,f136,f145,f153,f180,f190,f198,f200,f218,f221,f222,f238,f241,f251,f270,f281,f286,f290,f293,f294,f295,f296,f314,f315,f323,f361,f373,f374,f383,f384,f398,f413,f428,f471,f479,f514,f518,f522,f526,f533,f536,f546,f556,f588,f604,f617,f620,f631,f650,f652,f655,f663,f665,f666,f673,f674,f676,f682,f704,f705,f709,f734,f740,f747,f752,f771,f775,f776,loss)
+```
+## Factorizing target variable
+
+- From the dataset we have our target variable "loss". "loss" defines the percentage of the loan at which the customer was defaulted. If "loss" is zero you can imagine that the customer has fully paid back the capital and interest. If the "loss" is greater than zero, it means that the customer has defaulted. "loss" is expressed in percentage so if loss is 10, then it means that the customer has paid pack 90% of the capital but zero interests.
+
+- A new variable called loss binary (0 or 1) is created to be used in the classification model. Those customers with defaulted loans are represented by binary digit 1 and without any defaulted loan are represented by 0. This new variable is then added to the training data set with reduced number of variables.
+
+```{r, eval = FALSE}
+lossbin<-rep(0,80000)
+
+for(i in 1:nrow(Train)){
+  if(Train[i,80] > 0){
+    lossbin[i] <- 1
+  }
+}
+
+Train$lossbin <- lossbin
+Train$lossbin <- as.factor(Train$lossbin)
+```
+## Balancing biased date
+
+The dataset we have is biased data with ratio of defaulted customers to non defaulted customers as **1:10**. This unequal type of data the model will surely generate a baise.
+
+Synthetic Minority Oversampling Technique is a oversampling method that is used to adjust class distribution of dataset, i.e. ratio between the different classes/categories represented.
+
+Hence to eliminate model biasing we are randomly gathering equal amount of Defaulted to Non defaulted amount of Customers Data.
+
+```{r, eval = FALSE}
+NoLoss <- Train %>% filter(lossbin==0)
+Loss <- Train %>% filter(lossbin==1)
+
+Random_NoLoss <- sample(1:nrow(NoLoss),nrow(Loss),replace = FALSE)
+NoLoss_Train_Data <- NoLoss[Random_NoLoss,]
+Train_Unbaised <- rbind(NoLoss_Train_Data, Loss)
+TrainClass_Unbaised <- Train_Unbaised[,-80]
+```
+## Data Partitioning 
+
+### *Classification*
+
+- To check the performance of the Model we are partitioning the unbaised data.
+- Considering 80% data for TRAINING the model and 20% as VALIDATION data.
+
+```{r, eval = FALSE}
+set.seed(2019)
+
+index_C <- createDataPartition(TrainClass_Unbaised$lossbin, p = 0.8, list = FALSE)
+Train_Class <- TrainClass_Unbaised[index_C,] # Train data
+Valid_Class <- TrainClass_Unbaised[-index_C,] # Valid data
+```
+### *Regression*
+
+- To build a regression model we are considering only the data of the Customers who are Defaulted. Using this data we can see the percentage by which the customer is defaulted. i.e. from variable "loss"
+
+```{r, eval = FALSE}
+## Considering variables where loss is only greater than 0
+Loss_Data <- filter(Train_Unbaised,lossbin == 1)
+Loss_Data <- Loss_Data[,-81]
+```
+
+```{r, eval = FALSE}
+set.seed(2019)
+
+index_R <- createDataPartition(Loss_Data$loss, p = 0.8, list = FALSE)
+Train_Reg <- Loss_Data[index_R,]
+Valid_Reg <- Loss_Data[-index_R,]
+```
+
+# **Modeling**
+
+## *Classification*
+
+- Our foremost objective is to find which Customers who are likely to Default and which Customer would not. To extract this information we are building a Classification Model which will classify customers as *DEFAULTED(1)* and *NONDEFAULTED(0)*.
+
+- To achieve this objective we are considering few Classification models and looking for the one with better performance on our data.
+
+###  Generalized Classification Model
+
+```{r, eval = FALSE}
+Class_Model <- train(lossbin~.,data = Train_Class, method ='glmnet', 
+                     tuneGrid = expand.grid(alpha = 0,lambda = c(seq(0.1, 2, by = 0.1), seq(2, 5, 0.5), seq(5, 25, 1))))
+
+Class_Valid <- predict(Class_Model, Valid_Class)
+Class_ConfusionMatrix <- confusionMatrix(Class_Valid, Valid_Class$lossbin)
+```
+
+```{r, echo=FALSE}
+Class_Model
+```
+
+#### Cross Table Validation
+
+```{r}
+CrossTable(Valid_Class$lossbin, Class_Valid, prop.chisq = FALSE)
+```
+
+#### Confusion Matrix
+
+```{r, echo=FALSE}
+Class_ConfusionMatrix
+```
+
+### Ensemble Learning Model - Random Forest
+
+- Ensemble models in machine learning combine the decisions from multiple models to improve the overall performance.
+
+- Here we used Random Forest which is an ensemble learning method for classification, that operates by constructing a multitude of decision trees at training time and outputting the class that is the mode of the classes (classification) 
+
+```{r, eval = FALSE}
+RF_Model <- train(lossbin~., data = Train_Class, method = 'rf', ntree = 300)
+
+RF_Valid <- predict(RF_Model, Valid_Class)
+
+RF_ConfusionMatrix <- confusionMatrix(RF_Valid, Valid_Class$lossbin)
+```
+
+```{r, echo=FALSE}
+RF_Model
+```
+
+#### Cross Table Validation
+
+```{r}
+CrossTable(Valid_Class$lossbin, RF_Valid, prop.chisq = FALSE)
+```
+
+#### Confusion Matrix
+
+```{r, echo=FALSE}
+RF_ConfusionMatrix
+```
+
+### Support Vector Machine
+
+The objective of the support vector machine algorithm is to find a hyperplane in an N-dimensional space(N - the number of features) that distinctly classifies the data points.
+
+```{r, eval = FALSE}
+SVM_Model<-train(lossbin~., data = Train_Class, method="svmLinear")
+
+SVM_Valid <- predict(SVM_Model, Valid_Class)
+SVM_ConfusionMatrix <- confusionMatrix(SVM_Valid, Valid_Class$lossbin)
+```
+
+```{r, echo=FALSE}
+SVM_Model
+```
+
+#### Cross Table Validation
+
+```{r}
+CrossTable(Valid_Class$lossbin, SVM_Valid, prop.chisq = FALSE)
+```
+
+#### Confusion Matrix
+
+```{r, echo=FALSE}
+SVM_ConfusionMatrix
+```
+
+```{r, eval=FALSE}
+RF_Pred <- predict(RF_Model, Valid_Class, type = "prob")
+SVM_Pred <- predict(SVM_Model, Valid_Class, decision.values = TRUE, probability = TRUE)
+LM_Pred <- predict(Class_Model, Valid_Class, type = "prob")
+
+RF_RoC <- roc(Valid_Class$lossbin, RF_Pred[,2])
+SVM_Roc <- roc(Valid_Class$lossbin, as.numeric(SVM_Pred))
+LM_Roc <- roc(Valid_Class$lossbin, LM_Pred[,2])
+```
+
+## *Regression*
+
+- The Regression model are built in order to predict the Continuous Target Variable. 
+- Using classification model we can already predict if a customer will Default or not, but in order to know at what rate the Customer is likely to default in paying back the loan amount we are building Regression Models.
+
+- Here we are building few models to predict the defaulted percentage and then we will select the best performing model to predict our test data.
+
+### Lasso Regression
+
+LASSO (least absolute shrinkage and selection operator) is a regression analysis method that performs both variable selection and regularization in order to enhance the prediction accuracy and interpretability of the statistical model it produces.
+
+```{r, eval = FALSE}
+RegLasso_Model <- train(loss~., data = Train_Reg, method ='glmnet', trControl = trainControl(method = "cv",number = 10),
+                        tuneGrid = expand.grid(alpha = 1, lambda = c(seq(0.001, 0.5, by = 0.01))), metric = "Rsquared")
+```
+
+```{r, echo=FALSE}
+RegLasso_Model
+```
+
+##### Prediction on training set
+
+```{r, eval=FALSE}
+RegLasso_Train <- predict(RegLasso_Model, Train_Reg)
+RSqar_RegLasso_Train <- (cor(Train_Reg$loss,RegLasso_Train)^2)
+RMSE_Lasso_Train <- sqrt(mean((Train_Reg$loss - RegLasso_Train)^2))
+```
+
+##### Prediction on validation set
+
+```{r, eval=FALSE}
+RegLasso_Valid <- predict(RegLasso_Model, Valid_Reg)
+RSqar_RegLasso_Model <- (cor(Valid_Reg$loss,RegLasso_Valid)^2)
+RMSE_Lasso <- sqrt(mean((Valid_Reg$loss - RegLasso_Valid)^2))
+```
+
+#### Performance Measure
+
+```{r, eval=FALSE, , include=FALSE}
+PM_Lasso <- data.frame(RSqar_RegLasso_Train, RSqar_RegLasso_Model, RMSE_Lasso_Train, RMSE_Lasso)
+colnames(PM_Lasso) <- c("Train_R-Square","Valid_R-Square", "Train_RMSE", "Valid_RMSE")
+```
+```{r, echo=FALSE}
+PM_Lasso
+```
+
+### Ensemble Learning Model - Random Forest
+
+We are again using the emsembling model for the regression modeling to check the performance of Random forest model on predicting the Continuous target variable
+
+```{r, eval = FALSE}
+RegRF_Model<-train(loss~.,data = Train_Reg, method ='rf', ntree = 500, tuneGrid = expand.grid(.mtry = c(seq(15, 40, by = 5))))
+```
+
+```{r, echo=FALSE}
+RegRF_Model
+```
+
+##### Prediction on training set
+
+```{r, eval=FALSE}
+RegRF_Train <- predict(RegRF_Model, Train_Reg)
+RSqar_RegRF_Train <- (cor(Train_Reg$loss,RegRF_Train)^2)
+RMSE_RF_Train <- sqrt(mean((Train_Reg$loss - RegRF_Train)^2))
+```
+
+##### Prediction on validation set
+
+```{r, eval=FALSE}
+RegRF_Valid <- predict(RegRF_Model, Valid_Reg)
+RSqar_RegRF_Model <- (cor(Valid_Reg$loss, RegRF_Valid)^2)
+RMSE_RF <- sqrt(mean((Valid_Reg$loss - RegRF_Valid)^2))
+```
+
+#### Performance Measure
+
+```{r, eval=FALSE, include=FALSE}
+PM_RF <- data.frame(RSqar_RegRF_Train, RSqar_RegRF_Model, RMSE_RF_Train, RMSE_RF)
+colnames(PM_RF) <- c("Train_R-Square","Valid_R-Square", "Train_RMSE", "Valid_RMSE")
+```
+```{r, echo=FALSE}
+PM_RF
+```
+
+### XGBoost
+
+XGBoost is a decision-tree-based ensemble Machine Learning algorithm that uses a gradient boosting framework. 
+
+```{r, eval = FALSE}
+RegXGBoost_Model <- train(loss~., data = Train_Reg, method = "blackboost")
+```
+
+```{r, echo=FALSE}
+RegXGBoost_Model
+```
+
+##### Prediction on training set
+
+```{r, eval=FALSE}
+RegXGBoost_Train <- predict(RegXGBoost_Model, Train_Reg)
+RSqar_RegXGBoost_Train <- (cor(Train_Reg$loss,RegXGBoost_Train)^2)
+RMSE_RegXGBoost_Train <- sqrt(mean((Train_Reg$loss - RegXGBoost_Train)^2))
+```
+
+##### Prediction on validation set
+
+```{r, eval=FALSE}
+RegXGBoost_Valid <- predict(RegXGBoost_Model, Valid_Reg)
+RSqar_RegXGBoost_Model <- (cor(Valid_Reg$loss, RegXGBoost_Valid)^2)
+RMSE_XGBoost <- sqrt(mean((Valid_Reg$loss - RegXGBoost_Valid)^2))
+```
+
+#### Performance Measure
+
+```{r, eval=FALSE, include=FALSE}
+PM_XGBoost <- data.frame(RSqar_RegXGBoost_Train, RSqar_RegXGBoost_Model, RMSE_RegXGBoost_Train, RMSE_XGBoost)
+colnames(PM_XGBoost) <- c("Train_R-Square","Valid_R-Square", "Train_RMSE", "Valid_RMSE")
+```
+```{r, echo=FALSE}
+PM_XGBoost
+```
+
+# **Conclusion**
+
+```{r, echo=FALSE}
+ggroc(list("Random Forest" = RF_RoC, "Linear Model" = LM_Roc, "Support Vector Machine" = SVM_Roc), aes = c("linetype", "color")) +
+  theme(legend.position = c(0.7,0.2), panel.grid.major = element_blank(), panel.grid.minor = element_blank(), legend.title = element_blank()) +
+  labs(title = "RoC for Classification Models",  x = "False Positive Rate",  y = "True Positive Rate")
+```
+
+The above *Receiver operating characteristic (RoC) curve* for the three built classification model is plotted above. By looking at the curve we can see that the maximum area is covered by the Random Forest Model. Thus we will be using the **Random Forest** model for our test data prediction which is having highest accuracy of **65.22%**, sensitivity of **61.36%**, precision of **66.50%** and specificity of **69.08%**.
+
+```{r, include=FALSE, eval=FALSE}
+ModelPerf <- rbind.data.frame(PM_Lasso, PM_RF, PM_XGBoost)
+rownames(ModelPerf) <- c("Lasso", "Random_Forest", "XGBoost")
+```
+```{r, echo=FALSE}
+ModelPerf
+```
+
+Similarly, the regression model evaluation is formatted in the above table. By looking at the table Random Forest regression model works very well on the training dataset where as when we look at the performance on the validation data the model performs poorly, which determines overfitting. Thus, only the **Lasso regression model** performance is similar for both training and test dataset.
+So we will be using Lasso regression model with the **R-Square** value of **0.2972** and less **RMSE** value of **9.77**.
